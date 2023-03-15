@@ -1,0 +1,13 @@
+os
+time
+urllib3
+tk
+shutil
+beautifulsoup4
+selenium
+spotipy
+python.env
+base64==0.5.1
+dotenv==0.19.1
+pytube==10.8.5
+requests==2.26.0
