@@ -1,6 +1,5 @@
 # Spotify-Downloader
 Download any playlist from your Spotify account as a .MP3 file using python and youtube.
-# CodeGPTChat - Spotify Downloader
 
 This is a simple application to download songs from a Spotify playlist using the Spotify API and YouTube.
 
