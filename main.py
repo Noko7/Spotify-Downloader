@@ -1,13 +1,14 @@
 import os
-import urllib.request
+import urllib.parse
 import requests
 import re
 import string
-from tkinter import Tk, ttk, filedialog, StringVar
-from pytube import YouTube
+from yt_dlp import YoutubeDL
+from tkinter import Tk, ttk, filedialog, StringVar, messagebox
 from dotenv import load_dotenv
 from spotipy import SpotifyOAuth
 from spotipy.oauth2 import SpotifyOauthError
+import threading
 
 # Load environment variables
 load_dotenv(dotenv_path='.env')
@@ -43,7 +44,7 @@ playlists = {}
 def get_auth_header(token):
     return {"Authorization": "Bearer " + token}
 
-# Function to update the dropdown menu
+
 def update_playlist_dropdown():
     playlist_names = list(playlists.keys())
     playlist_menu = playlist_dropdown["menu"]
@@ -65,19 +66,21 @@ def get_user_playlists(token):
     print("Playlists retrieved successfully.")
     update_playlist_dropdown()
 
+# Sanitize filename to remove invalid characters for file saving
 def sanitize_filename(filename):
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
     return ''.join(c for c in filename if c in valid_chars)
 
-
 # Global variable to control the downloading process
 is_downloading = True
 
+# Function to stop the download process
 def stop_downloading():
     global is_downloading
     is_downloading = False
     status_label.config(text="Downloading stopped.")
 
+# Fetch tracks from the selected playlist
 def get_playlist_tracks(token, playlist_id):
     print(f"Retrieving tracks for playlist ID: {playlist_id}")
     headers = get_auth_header(token)
@@ -90,18 +93,28 @@ def get_playlist_tracks(token, playlist_id):
     print("Tracks retrieved successfully.")
     return tracks
 
-    valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
-    return ''.join(c for c in filename if c in valid_chars)
-
+# Download songs by searching YouTube and using yt-dlp
 def download_songs(selected_playlist):
     global is_downloading
     is_downloading = True
     status_label.config(text="Downloading...")
 
     user_path = path_label.cget("text")
+    
+    # Error handling for invalid download path
+    if user_path == "Select Download Path:":
+        messagebox.showerror("Error", "Please select a valid download path.")
+        return
+
     download_folder = os.path.join(user_path, sanitize_filename(selected_playlist).replace(" ", "_"))
-    if not os.path.exists(download_folder):
-        os.makedirs(download_folder)
+    
+    # Error handling for directory creation
+    try:
+        if not os.path.exists(download_folder):
+            os.makedirs(download_folder)
+    except OSError as e:
+        messagebox.showerror("Error", f"Failed to create download directory: {e}")
+        return
 
     playlist_id = playlists[selected_playlist]
     tracks = get_playlist_tracks(access_token, playlist_id)
@@ -126,15 +139,23 @@ def download_songs(selected_playlist):
             video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())
             for video_id in video_ids:
                 try:
-                    yt = YouTube(f"https://youtube.com/watch?v={video_id}")
-                    temp_file = os.path.join(download_folder, "temp.mp4")
-                    yt.streams.filter(only_audio=True).first().download(output_path=download_folder, filename="temp.mp4")
-                    if os.path.exists(temp_file):
-                        os.rename(temp_file, final_file)
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+                    ydl_opts = {
+                        'format': 'bestaudio/best',
+                        'outtmpl': os.path.join(download_folder, f'{sanitized_track_name}.%(ext)s'),
+                        'postprocessors': [{
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'mp3',
+                            'preferredquality': '192',
+                        }],
+                        'noplaylist': True
+                    }
+
+                    with YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([video_url])
                         print(f"Downloaded successfully: {final_file}")
                         break
-                    else:
-                        print(f"Temporary file not found: {temp_file}")
                 except Exception as e:
                     print(f"Error downloading video: {e}")
                     continue
@@ -142,49 +163,56 @@ def download_songs(selected_playlist):
             print(f"Error processing track {track}: {e}")
 
     status_label.config(text="Download completed.")
+
+
+def start_download():
+    threading.Thread(target=lambda: download_songs(selected_playlist.get()), daemon=True).start()
+
+
 def select_path():
     global path_label
     path = filedialog.askdirectory()
-    path_label.config(text=path)
+    if path:
+        path_label.config(text=path)
 
-# GUI setup
+
 screen = Tk()
 screen.title('Spotify Downloader')
 screen.geometry("600x400")
 
-# Styling
+
 style = ttk.Style(screen)
 style.theme_use('clam')
 
-# Layout
-frame = ttk.Frame(screen, padding="10")
+
+frame = ttk.Frame(screen, padding="20")
 frame.pack(fill='both', expand=True)
 
-# Path selection
-path_label = ttk.Label(frame, text="Select Download Path:")
-path_label.pack()
-select_path_button = ttk.Button(frame, text="Browse", command=select_path)
-select_path_button.pack()
 
-# Playlist dropdown
+path_label = ttk.Label(frame, text="Select Download Path:")
+path_label.pack(pady=10)
+select_path_button = ttk.Button(frame, text="Browse", command=select_path)
+select_path_button.pack(pady=10)
+
+
 selected_playlist = StringVar()
 playlist_dropdown = ttk.OptionMenu(frame, selected_playlist, "Loading playlists...")
-playlist_dropdown.pack()
+playlist_dropdown.pack(pady=10)
 
-# Fetch playlists and update dropdown
+
 get_user_playlists(access_token)
 
-# Download button
-download_button = ttk.Button(frame, text="Download", command=lambda: download_songs(selected_playlist.get()))
-download_button.pack()
 
-# Stop Downloading button
+download_button = ttk.Button(frame, text="Download", command=start_download)
+download_button.pack(pady=10)
+
+
 stop_button = ttk.Button(frame, text="Stop Downloading", command=stop_downloading)
-stop_button.pack()
+stop_button.pack(pady=10)
 
-# Status label
+
 status_label = ttk.Label(frame, text="")
-status_label.pack()
+status_label.pack(pady=10)
 
 # Start GUI
 screen.mainloop()
